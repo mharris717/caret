@@ -1,14 +1,14 @@
 // @ts-ignore
-import ollama from "ollama/browser";
 import { encodingForModel } from "js-tiktoken";
+import ollama from "ollama/browser";
 // @ts-ignore
 import pdfjs from "@bundled-es-modules/pdfjs-dist/build/pdf";
 import pdf_worker_code from "./workers/pdf.worker.js";
 
-import OpenAI from "openai";
-import Groq from "groq-sdk";
 import Anthropic from "@anthropic-ai/sdk";
+import Groq from "groq-sdk";
 import { around } from "monkey-around";
+import OpenAI from "openai";
 
 // Create a Blob URL from the worker code
 // @ts-ignore
@@ -16,21 +16,23 @@ const pdf_worker_blob = new Blob([pdf_worker_code], { type: "application/javascr
 const pdf_worker_url = URL.createObjectURL(pdf_worker_blob);
 pdfjs.GlobalWorkerOptions.workerSrc = pdf_worker_url;
 
-import { Canvas, ViewportNode, Message, Node, Edge, SparkleConfig } from "./types";
-import { MarkdownView, Modal, Notice, Plugin, setTooltip, setIcon, requestUrl } from "obsidian";
+import { MarkdownView, Modal, Notice, Plugin, requestUrl, setIcon, setTooltip } from "obsidian";
 import { CanvasFileData, CanvasNodeData, CanvasTextData } from "obsidian/canvas";
+import { Canvas, Edge, Message, Node, SparkleConfig, ViewportNode } from "./types";
 
 // Import all of the views, components, models, etc
-import { CaretSettingTab } from "./settings";
+import { Stream } from "openai/streaming.js";
+import { redBackgroundField } from "./editorExtensions/inlineDiffs";
+import { CustomModelModal } from "./modals/addCustomModel";
 import { CMDJModal } from "./modals/inlineEditingModal";
 import { InsertNoteModal } from "./modals/insertNoteModal";
 import { RemoveCustomModelModal } from "./modals/removeCustomModel";
 import { SystemPromptModal } from "./modals/systemPromptModal";
-import { redBackgroundField } from "./editorExtensions/inlineDiffs";
-import { NewNode, CaretPluginSettings } from "./types";
-import { CustomModelModal } from "./modals/addCustomModel";
-import { LinearWorkflowEditor } from "./views/workflowEditor";
+import { CaretSettingTab } from "./settings";
+import { refreshNode, refreshOutgoing, sparkle } from "./sparkle";
+import { CaretPluginSettings, NewNode } from "./types";
 import { FullPageChat, VIEW_CHAT } from "./views/chat";
+import { LinearWorkflowEditor } from "./views/workflowEditor";
 var parseString = require("xml2js").parseString;
 
 export const DEFAULT_SETTINGS: CaretPluginSettings = {
@@ -212,7 +214,7 @@ export default class CaretPlugin extends Plugin {
     color_picker_open_on_last_click: boolean = false;
     openai_client: OpenAI;
     groq_client: Groq;
-    anthropic_client: Anthropic;
+    anthropic_client: Anthropic; 
     openrouter_client: OpenAI;
     encoder: any;
 
@@ -607,7 +609,7 @@ version: 1
                             this.settings.llm_provider_options[this.settings.llm_provider][this.settings.model]
                                 .streaming
                         ) {
-                            const stream: Message = await this.llm_call_streaming(
+                            const stream = await this.llm_call_streaming(
                                 this.settings.llm_provider,
                                 this.settings.model,
                                 conversation,
@@ -1480,6 +1482,32 @@ version: 1
                         canvas.requestFrame();
                     },
                 },
+                {
+                  name: "Refresh",
+                  icon: "lucide-refresh-ccw",
+                  tooltip: "Refresh",
+                  callback: () => {
+                      console.log("Clicked Refresh")
+                      refreshNode(node.id, this.settings.system_prompt, {
+                        model: "default",
+                        provider: "default",
+                        temperature: 1,
+                    }, this);
+                  },
+              },
+              {
+                name: "Refresh Outgoing",  
+                icon: "lucide-refresh-ccw",
+                tooltip: "Refresh Outgoing",
+                callback: () => {
+                    console.log("Clicked Refresh")
+                    refreshOutgoing(node.id, this.settings.system_prompt, {
+                      model: "default",
+                      provider: "default",
+                      temperature: 1,
+                  }, this);
+                },
+            },
             ];
 
             const submenuEl = createSubmenu(submenuConfigs);
@@ -1758,254 +1786,9 @@ version: 1
             temperature: 1,
         }
     ) {
-        let local_system_prompt = system_prompt;
-        const canvas_view = this.app.workspace.getMostRecentLeaf()?.view;
-        // @ts-ignore
-        if (!canvas_view || !canvas_view.canvas) {
-            return;
-        }
-        // @ts-ignore
-        const canvas = canvas_view.canvas;
-
-        let node = await this.getCurrentNode(canvas, node_id);
-        if (!node) {
-            console.error("Node not found with ID:", node_id);
-            return;
-        }
-        node.unknownData.role = "user";
-
-        const canvas_data = canvas.getData();
-        const { edges, nodes } = canvas_data;
-
-        // Continue with operations on `target_node`
-        if (node.hasOwnProperty("file")) {
-            const file_path = node.file.path;
-            const file = this.app.vault.getAbstractFileByPath(file_path);
-            if (file) {
-                // @ts-ignore
-                const text = await this.app.vault.cachedRead(file);
-
-                // Check for the presence of three dashes indicating the start of the front matter
-                const front_matter = await this.getFrontmatter(file);
-                if (front_matter.hasOwnProperty("caret_prompt")) {
-                    let caret_prompt = front_matter.caret_prompt;
-
-                    if (caret_prompt === "parallel" && text) {
-                        const matchResult = text.match(/```xml([\s\S]*?)```/);
-                        if (!matchResult) {
-                            new Notice("Incorrectly formatted parallel workflow.");
-                            return;
-                        }
-                        const xml_content = matchResult[1].trim();
-                        const xml = await this.parseXml(xml_content);
-                        const system_prompt_list = xml.root.system_prompt;
-
-                        const system_prompt = system_prompt_list[0]._.trim();
-
-                        const prompts = xml.root.prompt;
-                        const card_height = node.height;
-                        const middle_index = Math.floor(prompts.length / 2);
-                        const highest_y = node.y - middle_index * (100 + card_height); // Calculate the highest y based on the middle index
-                        const sparkle_promises = [];
-
-                        for (let i = 0; i < prompts.length; i++) {
-                            const prompt = prompts[i];
-
-                            const prompt_content = prompt._.trim();
-                            const prompt_delay = prompt.$?.delay || 0;
-                            const prompt_model = prompt.$?.model || "default";
-                            const prompt_provider = prompt.$?.provider || "default";
-                            const prompt_temperature = parseFloat(prompt.$?.temperature) || this.settings.temperature;
-                            const new_node_content = `${prompt_content}`;
-                            const x = node.x + node.width + 200;
-                            const y = highest_y + i * (100 + card_height); // Increment y for each prompt to distribute them vertically including card height
-
-                            // Create a new user node
-                            const user_node = await this.createChildNode(
-                                canvas,
-                                node,
-                                x,
-                                y,
-                                new_node_content,
-                                "right",
-                                "left"
-                            );
-                            user_node.unknownData.role = "user";
-                            user_node.unknownData.displayOverride = false;
-
-                            const sparkle_config: SparkleConfig = {
-                                model: prompt_model,
-                                provider: prompt_provider,
-                                temperature: prompt_temperature,
-                            };
-
-                            const sparkle_promise = (async () => {
-                                if (prompt_delay > 0) {
-                                    new Notice(`Waiting for ${prompt_delay} seconds...`);
-                                    await new Promise((resolve) => setTimeout(resolve, prompt_delay * 1000));
-                                    new Notice(`Done waiting for ${prompt_delay} seconds.`);
-                                }
-                                await this.sparkle(user_node.id, system_prompt, sparkle_config);
-                            })();
-
-                            sparkle_promises.push(sparkle_promise);
-                        }
-
-                        await Promise.all(sparkle_promises);
-                        return;
-                    } else if (caret_prompt === "linear") {
-                        const matchResult = text.match(/```xml([\s\S]*?)```/);
-                        if (!matchResult) {
-                            new Notice("Incorrectly formatted linear workflow.");
-                            return;
-                        }
-                        const xml_content = matchResult[1].trim();
-                        const xml = await this.parseXml(xml_content);
-                        const system_prompt_list = xml.root.system_prompt;
-
-                        const system_prompt = system_prompt_list[0]._.trim();
-
-                        const prompts = xml.root.prompt;
-
-                        let current_node = node;
-                        for (let i = 0; i < prompts.length; i++) {
-                            const prompt = prompts[i];
-                            const prompt_content = prompt._.trim();
-                            const prompt_delay = prompt.$?.delay || 0;
-                            const prompt_model = prompt.$?.model || "default";
-                            const prompt_provider = prompt.$?.provider || "default";
-                            const prompt_temperature = parseFloat(prompt.$?.temperature) || this.settings.temperature;
-                            const new_node_content = `${prompt_content}`;
-                            const x = current_node.x + current_node.width + 200;
-                            const y = current_node.y;
-
-                            // Create a new user node
-                            const user_node = await this.createChildNode(
-                                canvas,
-                                current_node,
-                                x,
-                                y,
-                                new_node_content,
-                                "right",
-                                "left"
-                            );
-                            user_node.unknownData.role = "user";
-                            user_node.unknownData.displayOverride = false;
-                            const sparkle_config: SparkleConfig = {
-                                model: prompt_model,
-                                provider: prompt_provider,
-                                temperature: prompt_temperature,
-                            };
-                            if (prompt_delay > 0) {
-                                new Notice(`Waiting for ${prompt_delay} seconds...`);
-                                await new Promise((resolve) => setTimeout(resolve, prompt_delay * 1000));
-                                new Notice(`Done waiting for ${prompt_delay} seconds.`);
-                            }
-                            const assistant_node = await this.sparkle(user_node.id, system_prompt, sparkle_config);
-                            current_node = assistant_node;
-                        }
-                    } else {
-                        new Notice("Invalid Caret Prompt");
-                    }
-
-                    return;
-                }
-            } else {
-                console.error("File not found or is not a readable file:", file_path);
-            }
-        }
-        const longest_lineage = this.getLongestLineage(nodes, edges, node.id);
-
-        let convo_total_tokens = 0;
-        let conversation = [];
-
-        for (let i = 0; i < longest_lineage.length; i++) {
-            const node = longest_lineage[i];
-            const node_context = await this.getAssociatedNodeContent(node, nodes, edges);
-            // @ts-ignore
-            let role = node.role || "";
-            if (role === "user") {
-                let content = node.text;
-                // Only for the first node
-                // And get referencing content here.
-                const block_ref_content = await this.getRefBlocksContent(content);
-                if (block_ref_content.length > 0) {
-                    content += `\n${block_ref_content}`;
-                }
-                if (node_context.length > 0) {
-                    content += `\n${node_context}`;
-                }
-
-                if (content && content.length > 0) {
-                    const user_message_tokens = this.encoder.encode(content).length;
-                    if (user_message_tokens + convo_total_tokens > this.settings.context_window) {
-                        new Notice("Exceeding context window while adding user message. Trimming content");
-                        break;
-                    }
-                    const message = {
-                        role,
-                        content,
-                    };
-                    if (message.content.length > 0) {
-                        conversation.push(message);
-                        convo_total_tokens += user_message_tokens;
-                    }
-                }
-            } else if (role === "assistant") {
-                const content = node.text;
-                const message = {
-                    role,
-                    content,
-                };
-                conversation.push(message);
-            } else if (role === "system") {
-                local_system_prompt = node.text;
-            }
-        }
-        conversation.reverse();
-        if (local_system_prompt.length > 0) {
-            conversation.unshift({ role: "system", content: local_system_prompt });
-        }
-        let model = this.settings.model;
-        let provider = this.settings.llm_provider;
-        let temperature = this.settings.temperature;
-        if (sparkle_config.model !== "default") {
-            model = sparkle_config.model;
-        }
-        if (sparkle_config.provider !== "default") {
-            provider = sparkle_config.provider;
-        }
-        if (sparkle_config.temperature !== this.settings.temperature) {
-            temperature = sparkle_config.temperature;
-        }
-        const node_content = ``;
-        const x = node.x + node.width + 200;
-        const new_node = await this.createChildNode(canvas, node, x, node.y, node_content, "right", "left");
-        if (!new_node) {
-            throw new Error("Invalid new node");
-        }
-        const new_node_id = new_node.id;
-        if (!new_node_id) {
-            throw new Error("Invalid node id");
-        }
-        const new_canvas_node = await this.get_node_by_id(canvas, new_node_id);
-
-        if (!new_canvas_node.unknownData.hasOwnProperty("role")) {
-            new_canvas_node.unknownData.role = "";
-            new_canvas_node.unknownData.displayOverride = false;
-        }
-        new_canvas_node.unknownData.role = "assistant";
-
-        if (this.settings.llm_provider_options[provider][model].streaming) {
-            const stream = await this.llm_call_streaming(provider, model, conversation, temperature);
-            await this.update_node_content(new_node_id, stream, provider);
-            return new_node;
-        } else {
-            const content = await this.llm_call(this.settings.llm_provider, this.settings.model, conversation);
-            new_node.setText(content);
-        }
+        return sparkle(node_id, system_prompt, sparkle_config, this)
     }
-    async update_node_content(node_id: string, stream: any, llm_provider: string) {
+    async update_node_content(node_id: string, stream: Stream<any>, llm_provider: string) {
         const canvas_view = this.app.workspace.getMostRecentLeaf()?.view;
         // @ts-ignore
         if (!canvas_view?.canvas) {

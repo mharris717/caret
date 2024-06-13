@@ -29,7 +29,7 @@ import { InsertNoteModal } from "./modals/insertNoteModal";
 import { RemoveCustomModelModal } from "./modals/removeCustomModel";
 import { SystemPromptModal } from "./modals/systemPromptModal";
 import { CaretSettingTab } from "./settings";
-import { refreshNode, refreshOutgoing, sparkle } from "./sparkle";
+import { CanvasNodes, TrackCanvasChanges, refreshNode, refreshOutgoing, sparkle } from "./sparkle";
 import { CaretPluginSettings, NewNode } from "./types";
 import { FullPageChat, VIEW_CHAT } from "./views/chat";
 import { LinearWorkflowEditor } from "./views/workflowEditor";
@@ -217,12 +217,14 @@ export default class CaretPlugin extends Plugin {
     anthropic_client: Anthropic; 
     openrouter_client: OpenAI;
     encoder: any;
+    tracker: TrackCanvasChanges;
 
     async onload() {
         // Set up the encoder (gpt-4 is just used for everything as a short term solution)
         this.encoder = encodingForModel("gpt-4-0125-preview");
         // Load settings
         await this.loadSettings();
+        this.tracker = new TrackCanvasChanges(new CanvasNodes(this.app.workspace.getMostRecentLeaf()!.view, this));
 
         // Initialize API clients
         if (this.settings.openai_api_key) {
@@ -245,7 +247,12 @@ export default class CaretPlugin extends Plugin {
         }
         // Initialize settings dab.
         this.addSettingTab(new CaretSettingTab(this.app, this));
-
+        this.registerEvent(this.app.vault.on("modify", (file) => {
+            console.log("modify", file)
+            this.tracker.handleModify(new CanvasNodes(this.app.workspace.getMostRecentLeaf()!.view, this)); 
+            // debugger
+        }))
+        // this.app.vault.on()
         // Add Commands.
         this.addCommand({
             id: "add-custom-models",

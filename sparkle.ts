@@ -18,7 +18,7 @@ type RestrictedPlugin = Pick<
   | "getLongestLineage"
   | "getAssociatedNodeContent"
   | "getRefBlocksContent"
-  | "encoder"
+  | "encoder" | "tracker"
 >;
 export async function sparkle(
   node_id: string,
@@ -30,6 +30,9 @@ export async function sparkle(
   },
   plugin: RestrictedPlugin
 ) {
+    if (!plugin.tracker) {
+        plugin.tracker = new TrackCanvasChanges(new CanvasNodes(plugin.app.workspace.getMostRecentLeaf()!.view, plugin));
+    }
   const canvas_view = plugin.app.workspace.getMostRecentLeaf()?.view;
   // @ts-ignore
   if (!canvas_view || !canvas_view.canvas) {
@@ -204,7 +207,7 @@ export async function sparkle(
   }
 }
 
-class CanvasNodes {
+export class CanvasNodes {
   nodes: Node[];
   edges: Edge[];
   canvas: any;
@@ -224,6 +227,39 @@ class CanvasNodes {
     this.nodes = nodes;
     this.edges = edges;
   }
+
+  textById( ) {
+    const res: {[k: string]: string} = {};
+    this.nodes.forEach((node) => {
+        res[node.id] = node.text;
+    })
+    return res;
+  }
+}
+
+export class TrackCanvasChanges {
+    canvas_nodes: CanvasNodes;
+    constructor(canvas_nodes: CanvasNodes) {
+      this.canvas_nodes = canvas_nodes;
+    }
+
+    handleModify(new_nodes: CanvasNodes) {
+        const old = this.canvas_nodes.textById();
+        const nw = new_nodes.textById();
+        for (const [id, text] of Object.entries(nw)) {
+            if (old[id] !== text) {
+                const new_node = new_nodes.nodes.find((node) => node.id === id);
+                console.log("changed" , new_node) 
+                refreshOutgoing(new_node!.id, "", {
+                    model: "default",
+                    provider: "default",
+                    temperature: 1,
+                  }, this.canvas_nodes.plugin);
+
+            } 
+        }
+        this.canvas_nodes = new_nodes;
+    }
 }
 
 export async function refreshNode(
@@ -308,10 +344,12 @@ export async function refreshOutgoing(
   plugin: RestrictedPlugin
 ) {
   const canvas_view = plugin.app.workspace.getMostRecentLeaf()?.view;
+    canvas_view?.registerEvent
   const { app, settings } = plugin;
-
+  
   const canvas_nodes = new CanvasNodes(canvas_view!, plugin);
   const { nodes, edges, canvas } = canvas_nodes;
+  
 
   let updated_node_raw = await plugin.getCurrentNode(canvas, updated_node_id);
   let updated_node = new FancyNode(updated_node_raw, canvas_nodes);

@@ -24,7 +24,7 @@ export type RestrictedPlugin = Pick<
 export class CaretCanvas {
   nodes: Node[];
   edges: Edge[];
-//   canvas: any;
+  canvas: any;
   constructor(readonly canvas_view: View, readonly plugin: RestrictedPlugin) {
     // @ts-ignore
     if (!canvas_view || !canvas_view.canvas) {
@@ -32,7 +32,7 @@ export class CaretCanvas {
     }
     // @ts-ignore
     const canvas = canvas_view.canvas;
-    // this.canvas = canvas;
+    this.canvas = canvas;
 
     // node.unknownData.role = "user";
 
@@ -53,6 +53,10 @@ export class CaretCanvas {
   getNode(nodeId: string) {
     const [res] = this.nodes.filter((node) => node.id === nodeId);
     return new CaretNode(res, this);
+  }
+
+  getLongestLineage(node_id: string) {
+    return CaretPlugin.getLongestLineage(this.nodes, this.edges, node_id);
   }
 
   static fromPlugin(plugin: RestrictedPlugin) {
@@ -120,5 +124,9 @@ export class CaretNode {
 
   get id() {
     return this.node.id;
+  }
+
+  getLongestLineage() {
+    return this.canvas_nodes.getLongestLineage(this.node.id); 
   }
 }

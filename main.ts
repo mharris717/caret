@@ -1,7 +1,7 @@
 // @ts-ignore
 import { encodingForModel } from "js-tiktoken";
-// import ollama from "ollama/browser";
-const ollama: any = 42 
+import ollama from "ollama";
+// const ollama: any = 42 
 // @ts-ignore
 import pdfjs from "@bundled-es-modules/pdfjs-dist/build/pdf";
 import pdf_worker_code from "./workers/pdf.worker.js";
@@ -22,7 +22,6 @@ import { CanvasFileData, CanvasNodeData, CanvasTextData } from "obsidian/canvas"
 import { Canvas, Edge, Message, Node, SparkleConfig, ViewportNode } from "./types";
 
 // Import all of the views, components, models, etc
-import { Stream } from "openai/streaming.js";
 import { CaretCanvas, TrackCanvasChanges } from "./domain";
 import { redBackgroundField } from "./editorExtensions/inlineDiffs";
 import { CustomModelModal } from "./modals/addCustomModel";
@@ -220,6 +219,11 @@ export default class CaretPlugin extends Plugin {
     openrouter_client: OpenAI;
     encoder: any;
     tracker: TrackCanvasChanges;
+
+    async foo() {
+      const view = this.app.workspace.getMostRecentLeaf()!.view
+ 
+    }
 
     async onload() {
         // Set up the encoder (gpt-4 is just used for everything as a short term solution)
@@ -1797,7 +1801,7 @@ version: 1
     ) {
         return sparkle(node_id, system_prompt, sparkle_config, this)
     }
-    async update_node_content(node_id: string, stream: Stream<any>, llm_provider: string) {
+    async update_node_content(node_id: string, stream: any, llm_provider: string) {
         const canvas_view = this.app.workspace.getMostRecentLeaf()?.view;
         // @ts-ignore
         if (!canvas_view?.canvas) {
@@ -1990,7 +1994,7 @@ version: 1
                     model: model_param,
                     messages: conversation,
                     stream: true,
-                    temperature: temperature,
+                    // temperature: temperature,
                 });
                 return response;
             } catch (error) {

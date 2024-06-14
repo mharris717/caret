@@ -1,6 +1,7 @@
 // @ts-ignore
 import { encodingForModel } from "js-tiktoken";
-import ollama from "ollama/browser";
+// import ollama from "ollama/browser";
+const ollama: any = 42 
 // @ts-ignore
 import pdfjs from "@bundled-es-modules/pdfjs-dist/build/pdf";
 import pdf_worker_code from "./workers/pdf.worker.js";
@@ -22,6 +23,7 @@ import { Canvas, Edge, Message, Node, SparkleConfig, ViewportNode } from "./type
 
 // Import all of the views, components, models, etc
 import { Stream } from "openai/streaming.js";
+import { CaretCanvas, TrackCanvasChanges } from "./domain";
 import { redBackgroundField } from "./editorExtensions/inlineDiffs";
 import { CustomModelModal } from "./modals/addCustomModel";
 import { CMDJModal } from "./modals/inlineEditingModal";
@@ -29,7 +31,7 @@ import { InsertNoteModal } from "./modals/insertNoteModal";
 import { RemoveCustomModelModal } from "./modals/removeCustomModel";
 import { SystemPromptModal } from "./modals/systemPromptModal";
 import { CaretSettingTab } from "./settings";
-import { CanvasNodes, TrackCanvasChanges, refreshNode, refreshOutgoing, sparkle } from "./sparkle";
+import { refreshNode, refreshOutgoing, sparkle } from "./sparkle";
 import { CaretPluginSettings, NewNode } from "./types";
 import { FullPageChat, VIEW_CHAT } from "./views/chat";
 import { LinearWorkflowEditor } from "./views/workflowEditor";
@@ -224,7 +226,7 @@ export default class CaretPlugin extends Plugin {
         this.encoder = encodingForModel("gpt-4-0125-preview");
         // Load settings
         await this.loadSettings();
-        this.tracker = new TrackCanvasChanges(new CanvasNodes(this.app.workspace.getMostRecentLeaf()!.view, this));
+        this.tracker = new TrackCanvasChanges(new CaretCanvas(this.app.workspace.getMostRecentLeaf()!.view, this));
 
         // Initialize API clients
         if (this.settings.openai_api_key) {
@@ -249,7 +251,7 @@ export default class CaretPlugin extends Plugin {
         this.addSettingTab(new CaretSettingTab(this.app, this));
         this.registerEvent(this.app.vault.on("modify", (file) => {
             console.log("modify", file)
-            this.tracker.handleModify(new CanvasNodes(this.app.workspace.getMostRecentLeaf()!.view, this)); 
+            this.tracker.handleModify(new CaretCanvas(this.app.workspace.getMostRecentLeaf()!.view, this)); 
             // debugger
         }))
         // this.app.vault.on()
@@ -726,7 +728,7 @@ version: 1
                     let xml_object;
 
                     if (text) {
-                        xml_object = await this.parseXml(text);
+                        xml_object = await CaretPlugin.parseXml(text);
                     } else {
                         new Notice("No XML block found.");
                         return;
@@ -838,7 +840,7 @@ version: 1
         const nodes_array = Array.from(nodes_iterator);
         const canvas_data = canvas.getData();
         const { edges, nodes } = canvas_data;
-        const longest_lineage = await this.getLongestLineage(nodes, edges, node.id);
+        const longest_lineage = await CaretPlugin.getLongestLineage(nodes, edges, node.id);
 
         // Create a set to track lineage node IDs for comparison
         const lineage_node_ids = new Set(longest_lineage.map((node) => node.id));
@@ -1320,7 +1322,7 @@ version: 1
         this.highlightLineage();
     }
 
-    async parseXml(xmlString: string): Promise<any> {
+    static async parseXml(xmlString: string): Promise<any> {
         try {
             const result = await new Promise((resolve, reject) => {
                 parseString(xmlString, (err: any, result: any) => {
@@ -1554,7 +1556,7 @@ version: 1
 
         return ancestors;
     }
-    getLongestLineage(nodes: Node[], edges: Edge[], nodeId: string): Node[] {
+    static getLongestLineage(nodes: Node[], edges: Edge[], nodeId: string): Node[] {
         let longestLineage: Node[] = [];
 
         function findLongestPath(currentId: string, path: Node[]): void {
@@ -2145,6 +2147,18 @@ version: 1
     }
 
     async createChildNode(
+      canvas: Canvas,
+      parentNode: CanvasNodeData,
+      x: number,
+      y: number,
+      content: string = "",
+      from_side: string = "right",
+      to_side: string = "left"
+  ) {
+    return CaretPlugin.createChildNode(canvas, parentNode, x, y, content, from_side, to_side);
+  }
+
+    static async createChildNode(
         canvas: Canvas,
         parentNode: CanvasNodeData,
         x: number,
@@ -2153,7 +2167,7 @@ version: 1
         from_side: string = "right",
         to_side: string = "left"
     ) {
-        let tempChildNode = await this.addNodeToCanvas(canvas, this.generateRandomId(16), {
+        let tempChildNode = await CaretPlugin.addNodeToCanvas(canvas, CaretPlugin.generateRandomId(16), {
             x: x,
             y: y,
             width: 400,
@@ -2161,7 +2175,7 @@ version: 1
             type: "text",
             content,
         });
-        await this.createEdge(parentNode, tempChildNode, canvas, from_side, to_side);
+        await CaretPlugin.createEdge(parentNode, tempChildNode, canvas, from_side, to_side);
 
         const node = canvas.nodes?.get(tempChildNode?.id!);
         if (!node) {
@@ -2170,7 +2184,7 @@ version: 1
         return node;
     }
 
-    async addNodeToCanvas(canvas: Canvas, id: string, { x, y, width, height, type, content }: NewNode) {
+    static async addNodeToCanvas(canvas: Canvas, id: string, { x, y, width, height, type, content }: NewNode) {
         if (!canvas) {
             return;
         }
@@ -2207,10 +2221,10 @@ version: 1
 
         return node;
     }
-    async createEdge(node1: any, node2: any, canvas: any, from_side: string = "right", to_side: string = "left") {
-        this.addEdgeToCanvas(
+    static async createEdge(node1: any, node2: any, canvas: any, from_side: string = "right", to_side: string = "left") {
+        CaretPlugin.addEdgeToCanvas(
             canvas,
-            this.generateRandomId(16),
+            CaretPlugin.generateRandomId(16),
             {
                 fromOrTo: "from",
                 side: from_side,
@@ -2223,14 +2237,15 @@ version: 1
             }
         );
     }
-    generateRandomId(length: number): string {
+    static generateRandomId(length: number): string {
         const hexArray = Array.from({ length }, () => {
             const randomHex = Math.floor(Math.random() * 16).toString(16);
             return randomHex;
         });
         return hexArray.join("");
     }
-    addEdgeToCanvas(canvas: any, edgeID: string, fromEdge: any, toEdge: any) {
+    
+    static addEdgeToCanvas(canvas: any, edgeID: string, fromEdge: any, toEdge: any) {
         if (!canvas) {
             return;
         }

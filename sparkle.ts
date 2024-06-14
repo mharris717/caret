@@ -1,25 +1,10 @@
 import CaretPlugin from "main";
-import { Notice, View } from "obsidian";
+import { Notice } from "obsidian";
 
-import { CaretPluginSettings, Edge, Node, SparkleConfig } from "./types";
+import { CaretCanvas, RestrictedPlugin, TrackCanvasChanges, mergeSettingsAndSparkleConfig } from "./domain";
+import { Node, SparkleConfig } from "./types";
 
-type RestrictedPlugin = Pick<
-  CaretPlugin,
-  | "app"
-  | "settings"
-  | "getCurrentNode"
-  | "getFrontmatter"
-  | "parseXml"
-  | "createChildNode"
-  | "get_node_by_id"
-  | "llm_call_streaming"
-  | "llm_call"
-  | "update_node_content"
-  | "getLongestLineage"
-  | "getAssociatedNodeContent"
-  | "getRefBlocksContent"
-  | "encoder" | "tracker"
->;
+ 
 export async function sparkle(
   node_id: string,
   system_prompt: string = "",
@@ -30,9 +15,9 @@ export async function sparkle(
   },
   plugin: RestrictedPlugin
 ) {
-    if (!plugin.tracker) {
-        plugin.tracker = new TrackCanvasChanges(new CanvasNodes(plugin.app.workspace.getMostRecentLeaf()!.view, plugin));
-    }
+  if (!plugin.tracker) {
+    plugin.tracker = new TrackCanvasChanges(new CaretCanvas(plugin.app.workspace.getMostRecentLeaf()!.view, plugin));
+  }
   const canvas_view = plugin.app.workspace.getMostRecentLeaf()?.view;
   // @ts-ignore
   if (!canvas_view || !canvas_view.canvas) {
@@ -72,7 +57,7 @@ export async function sparkle(
             return;
           }
           const xml_content = matchResult[1].trim();
-          const xml = await plugin.parseXml(xml_content);
+          const xml = await CaretPlugin.parseXml(xml_content);
           const system_prompt_list = xml.root.system_prompt;
 
           const system_prompt = system_prompt_list[0]._.trim();
@@ -107,11 +92,7 @@ export async function sparkle(
             };
 
             const sparkle_promise = (async () => {
-              if (prompt_delay > 0) {
-                new Notice(`Waiting for ${prompt_delay} seconds...`);
-                await new Promise((resolve) => setTimeout(resolve, prompt_delay * 1000));
-                new Notice(`Done waiting for ${prompt_delay} seconds.`);
-              }
+              await waitForPromptDelay(prompt_delay); 
               await sparkle(user_node.id, system_prompt, sparkle_config, plugin);
             })();
 
@@ -127,7 +108,7 @@ export async function sparkle(
             return;
           }
           const xml_content = matchResult[1].trim();
-          const xml = await plugin.parseXml(xml_content);
+          const xml = await CaretPlugin.parseXml(xml_content);
           const system_prompt_list = xml.root.system_prompt;
 
           const system_prompt = system_prompt_list[0]._.trim();
@@ -155,11 +136,7 @@ export async function sparkle(
               provider: prompt_provider,
               temperature: prompt_temperature,
             };
-            if (prompt_delay > 0) {
-              new Notice(`Waiting for ${prompt_delay} seconds...`);
-              await new Promise((resolve) => setTimeout(resolve, prompt_delay * 1000));
-              new Notice(`Done waiting for ${prompt_delay} seconds.`);
-            }
+            await waitForPromptDelay(prompt_delay);
             const assistant_node = await sparkle(user_node.id, system_prompt, sparkle_config, plugin);
             current_node = assistant_node;
           }
@@ -207,61 +184,6 @@ export async function sparkle(
   }
 }
 
-export class CanvasNodes {
-  nodes: Node[];
-  edges: Edge[];
-  canvas: any;
-  constructor(readonly canvas_view: View, readonly plugin: RestrictedPlugin) {
-    // @ts-ignore
-    if (!canvas_view || !canvas_view.canvas) {
-      return;
-    }
-    // @ts-ignore
-    const canvas = canvas_view.canvas;
-    this.canvas = canvas;
-
-    // node.unknownData.role = "user";
-
-    const canvas_data = canvas.getData();
-    const { edges, nodes } = canvas_data;
-    this.nodes = nodes;
-    this.edges = edges;
-  }
-
-  textById( ) {
-    const res: {[k: string]: string} = {};
-    this.nodes.forEach((node) => {
-        res[node.id] = node.text;
-    })
-    return res;
-  }
-}
-
-export class TrackCanvasChanges {
-    canvas_nodes: CanvasNodes;
-    constructor(canvas_nodes: CanvasNodes) {
-      this.canvas_nodes = canvas_nodes;
-    }
-
-    handleModify(new_nodes: CanvasNodes) {
-        const old = this.canvas_nodes.textById();
-        const nw = new_nodes.textById();
-        for (const [id, text] of Object.entries(nw)) {
-            if (old[id] !== text) {
-                const new_node = new_nodes.nodes.find((node) => node.id === id);
-                console.log("changed" , new_node) 
-                refreshOutgoing(new_node!.id, "", {
-                    model: "default",
-                    provider: "default",
-                    temperature: 1,
-                  }, this.canvas_nodes.plugin);
-
-            } 
-        }
-        this.canvas_nodes = new_nodes;
-    }
-}
-
 export async function refreshNode(
   refreshed_node_id: string,
   system_prompt: string = "",
@@ -276,16 +198,14 @@ export async function refreshNode(
   const canvas_view = plugin.app.workspace.getMostRecentLeaf()?.view;
   const { app, settings } = plugin;
 
-  const canvas_nodes = new CanvasNodes(canvas_view!, plugin);
-  const { nodes, edges, canvas } = canvas_nodes;
 
-  let refreshed_node = await plugin.getCurrentNode(canvas, refreshed_node_id);
-  if (!refreshed_node) {
-    console.error("Node not found with ID:", refreshed_node_id);
-    return;
-  }
+  const canvas_nodes =  CaretCanvas.fromPlugin(plugin)   
+  const { nodes, edges } = canvas_nodes;
+  const refreshed_node = canvas_nodes.getNode(refreshed_node_id)
+//   let refreshed_node = await plugin.getCurrentNode(canvas, refreshed_node_id);
+ 
 
-  const longest_lineage = plugin.getLongestLineage(nodes, edges, refreshed_node.id);
+  const longest_lineage = CaretPlugin.getLongestLineage(nodes, edges, refreshed_node.id);
   console.log("longest_lineage in refresh", longest_lineage);
   const parent_node = longest_lineage[1];
   console.log("parent_node", parent_node);
@@ -296,41 +216,8 @@ export async function refreshNode(
   const { provider, model, temperature } = mergedSparkleConfig;
 
   const stream = await plugin.llm_call_streaming(provider, model, conversation, temperature);
-  refreshed_node.text = "";
+  refreshed_node.node.text = "";
   await plugin.update_node_content(refreshed_node.id, stream, provider);
-}
-
-function mergeSettingsAndSparkleConfig(settings: CaretPluginSettings, sparkle_config: SparkleConfig): SparkleConfig {
-  let model = settings.model;
-  let provider = settings.llm_provider;
-  let temperature = settings.temperature;
-  if (sparkle_config.model !== "default") {
-    model = sparkle_config.model;
-  }
-  if (sparkle_config.provider !== "default") {
-    provider = sparkle_config.provider;
-  }
-  if (sparkle_config.temperature !== settings.temperature) {
-    temperature = sparkle_config.temperature;
-  }
-  return { model, provider, temperature };
-}
-
-class FancyNode {
-  constructor(readonly node: Node, readonly canvas_nodes: CanvasNodes) {}
-
-  outgoingNodes() {
-    return this.canvas_nodes.edges.filter((edge) => edge.fromNode === this.node.id).map((edge) => this.getNode(edge.toNode));
-  }
-
-  getNode(nodeId: string) {
-    const [res] = this.canvas_nodes.nodes.filter((node) => node.id === nodeId);
-    return new FancyNode(res, this.canvas_nodes);
-  }
-
-  async getAssociatedNodeContent() {
-    return this.canvas_nodes.plugin.getAssociatedNodeContent(this.node, this.canvas_nodes.nodes, this.canvas_nodes.edges);
-  }
 }
 
 export async function refreshOutgoing(
@@ -344,15 +231,13 @@ export async function refreshOutgoing(
   plugin: RestrictedPlugin
 ) {
   const canvas_view = plugin.app.workspace.getMostRecentLeaf()?.view;
-    canvas_view?.registerEvent
+  canvas_view?.registerEvent;
   const { app, settings } = plugin;
-  
-  const canvas_nodes = new CanvasNodes(canvas_view!, plugin);
-  const { nodes, edges, canvas } = canvas_nodes;
-  
 
-  let updated_node_raw = await plugin.getCurrentNode(canvas, updated_node_id);
-  let updated_node = new FancyNode(updated_node_raw, canvas_nodes);
+  const canvas_nodes = new CaretCanvas(canvas_view!, plugin);
+  const { nodes, edges  } = canvas_nodes;
+
+  let updated_node = canvas_nodes.getNode(updated_node_id);
   for (const outgoing of updated_node.outgoingNodes()) {
     // @ts-ignore
     console.log("outgoing role", outgoing.node.role);
@@ -366,7 +251,7 @@ export async function refreshOutgoing(
 }
 
 async function buildConversation(node: Node, nodes: Node[], edges: any[], system_prompt: string, plugin: RestrictedPlugin) {
-  const longest_lineage = plugin.getLongestLineage(nodes, edges, node.id);
+  const longest_lineage = CaretPlugin.getLongestLineage(nodes, edges, node.id);
   console.log("longest", longest_lineage);
 
   const conversation = [];
@@ -423,3 +308,12 @@ async function buildConversation(node: Node, nodes: Node[], edges: any[], system
   }
   return { conversation };
 }
+
+async function waitForPromptDelay(prompt_delay: number) {
+    if (prompt_delay > 0) {
+        new Notice(`Waiting for ${prompt_delay} seconds...`);
+        await new Promise((resolve) => setTimeout(resolve, prompt_delay * 1000));
+        new Notice(`Done waiting for ${prompt_delay} seconds.`);
+      }
+}
+

@@ -22,7 +22,6 @@ import { CanvasFileData, CanvasNodeData, CanvasTextData } from "obsidian/canvas"
 import { Canvas, Edge, Message, Node, SparkleConfig, ViewportNode } from "./types";
 
 // Import all of the views, components, models, etc
-import { CaretCanvas } from "./domain";
 import { redBackgroundField } from "./editorExtensions/inlineDiffs";
 import { CustomModelModal } from "./modals/addCustomModel";
 import { CMDJModal } from "./modals/inlineEditingModal";
@@ -30,7 +29,8 @@ import { InsertNoteModal } from "./modals/insertNoteModal";
 import { RemoveCustomModelModal } from "./modals/removeCustomModel";
 import { SystemPromptModal } from "./modals/systemPromptModal";
 import { CaretSettingTab } from "./settings";
-import { refreshNode, refreshOutgoing, sparkle } from "./sparkle";
+import { CaretCanvas } from "./caret_canvas";
+
 import { CaretPluginSettings, NewNode } from "./types";
 import { FullPageChat, VIEW_CHAT } from "./views/chat";
 import { LinearWorkflowEditor } from "./views/workflowEditor";
@@ -1470,30 +1470,11 @@ version: 1
           icon: "lucide-refresh-ccw",
           tooltip: "Refresh",
           callback: () => {
-            console.log("Clicked Refresh");
             this.refreshNode(node.id, this.settings.system_prompt, {
               model: "default",
               provider: "default",
               temperature: 1,
             });
-          },
-        },
-        {
-          name: "Refresh Outgoing",
-          icon: "lucide-refresh-ccw",
-          tooltip: "Refresh Outgoing",
-          callback: () => {
-            console.log("Clicked Refresh");
-            refreshOutgoing(
-              node.id,
-              this.settings.system_prompt,
-              {
-                model: "default",
-                provider: "default",
-                temperature: 1,
-              },
-              this
-            );
           },
         },
       ];

@@ -1,7 +1,7 @@
 import CaretPlugin from "main";
 import { Notice } from "obsidian";
 
-import { CaretCanvas, RestrictedPlugin, TrackCanvasChanges, mergeSettingsAndSparkleConfig } from "./domain";
+import { CaretCanvas, RestrictedPlugin, mergeSettingsAndSparkleConfig } from "./domain";
 import { Node, SparkleConfig } from "./types";
 
 // export type Me = Pick<
@@ -21,10 +21,6 @@ export async function sparkle(
   },
   plugin: RestrictedPlugin
 ) {
-  if (!plugin.tracker) {
-    plugin.tracker = new TrackCanvasChanges(new CaretCanvas(plugin.app.workspace.getMostRecentLeaf()!.view, plugin));
-  }
-
   const canvas_nodes = CaretCanvas.fromPlugin(plugin);
 
   const { app, settings } = plugin;

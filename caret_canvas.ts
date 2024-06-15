@@ -1,30 +1,13 @@
 import CaretPlugin from "main";
 import { View } from "obsidian";
 
-import { refreshOutgoing } from "./sparkle";
 import { CaretPluginSettings, Edge, Node, SparkleConfig } from "./types";
-
-export type RestrictedPlugin = Pick<
-  CaretPlugin,
-  | "app"
-  | "settings"
-  | "getCurrentNode"
-  | "getFrontmatter"
-  | "createChildNode"
-  | "get_node_by_id"
-  | "llm_call_streaming"
-  | "llm_call"
-  | "update_node_content"
-  | "getAssociatedNodeContent"
-  | "getRefBlocksContent"
-  | "encoder"
->;
 
 export class CaretCanvas {
   nodes: Node[];
   edges: Edge[];
   canvas: any;
-  constructor(readonly canvas_view: View, readonly pluginx: RestrictedPlugin) {
+  constructor(readonly canvas_view: View) {
     // @ts-ignore
     if (!canvas_view || !canvas_view.canvas) {
       return;
@@ -58,39 +41,10 @@ export class CaretCanvas {
     return CaretPlugin.getLongestLineage(this.nodes, this.edges, node_id);
   }
 
-  static fromPlugin(plugin: RestrictedPlugin) {
-    return new CaretCanvas(plugin.app.workspace.getMostRecentLeaf()!.view, plugin);
+  static fromPlugin(plugin: CaretPlugin) {
+    return new CaretCanvas(plugin.app.workspace.getMostRecentLeaf()!.view);
   }
 }
-
-// export class TrackCanvasChanges {
-//   canvas_nodes: CaretCanvas;
-//   constructor(canvas_nodes: CaretCanvas) {
-//     this.canvas_nodes = canvas_nodes;
-//   }
-
-//   handleModify(new_nodes: CaretCanvas) {
-//     const old = this.canvas_nodes.textById();
-//     const nw = new_nodes.textById();
-//     for (const [id, text] of Object.entries(nw)) {
-//       if (old[id] !== text) {
-//         const new_node = new_nodes.nodes.find((node) => node.id === id);
-//         console.log("changed", new_node);
-//         refreshOutgoing(
-//           new_node!.id,
-//           "",
-//           {
-//             model: "default",
-//             provider: "default",
-//             temperature: 1,
-//           },
-//           this.canvas_nodes.plugin
-//         );
-//       }
-//     }
-//     this.canvas_nodes = new_nodes;
-//   }
-// }
 
 export function mergeSettingsAndSparkleConfig(settings: CaretPluginSettings, sparkle_config: SparkleConfig): SparkleConfig {
   let model = settings.model;
@@ -116,10 +70,6 @@ export class CaretNode {
       .filter((edge) => edge.fromNode === this.node.id)
       .map((edge) => this.canvas_nodes.getNode(edge.toNode));
   }
-
-  // async getAssociatedNodeContent() {
-  //   return this.canvas_nodes.plugin.getAssociatedNodeContent(this.node, this.canvas_nodes.nodes, this.canvas_nodes.edges);
-  // }
 
   get id() {
     return this.node.id;
